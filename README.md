@@ -3,6 +3,7 @@
 Spring AI based personal behavior predictor MVP.
 
 详细接口文档见：`API.md`
+中文使用文档见：`README-ZH.md`
 
 > Current version removes direct `VectorStore` compile dependency to keep startup simple.
 > You can later replace `MemoryService` with pgvector/Milvus/Elastic vector retrieval.
