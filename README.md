@@ -1,104 +1,63 @@
-# qforce
+# qforce 中文文档
 
-Spring AI based personal behavior predictor MVP.
+qforce 是一个“**个人行为预测 + 反馈学习**”系统：  
+用户输入“发生了什么事”，系统预测你接下来可能采取的具体行动；当你回填真实结果后，系统会自动更新画像参数，让后续预测逐步更贴近你的习惯。
 
-详细接口文档见：`API.md`
-中文使用文档见：`README-ZH.md`
+## 1. 核心能力
 
-> Current version removes direct `VectorStore` compile dependency to keep startup simple.
-> You can later replace `MemoryService` with pgvector/Milvus/Elastic vector retrieval.
+- 一句话事件输入预测（普通用户入口）
+- 自然语言事件自动抽取
+- 输出 Top3 具体行动（含概率、证据、推理）
+- 预测结果与真实结果回写入库
+- 基于反馈自动微调 `adaptive_profile`（动态步长 + 平滑）
 
-## What it does
+## 2. 整体流程
 
-- Accepts surrounding events (`/api/predict-behavior`)
-- Supports one-sentence simple input (`/api/predict-behavior/simple`)
-- Computes deterministic impact scores (`mood/focus/stress`)
-- Retrieves personal memory from PostgreSQL `memory_snippet`
-- Uses one Self Agent (LLM) to predict top concrete actions
-- Falls back to rule-based prediction when LLM is unavailable
-- Persists behavior events + prediction results to PostgreSQL knowledge base
-- Auto-ingests extracted events into `memory_snippet` for future retrieval
-- Supports outcome feedback to auto-tune adaptive profile (`/api/predict-behavior/feedback`)
-- Feedback tuning uses dynamic learning rate with recent-sample smoothing
+1. 用户输入事件（推荐 `POST /api/predict-behavior/simple`）
+2. 系统提取结构化事件并预测行动
+3. 预测与事件写入知识库
+4. 用户提交真实行动反馈（`POST /api/predict-behavior/feedback`）
+5. 系统更新 `adaptive_profile`，下次预测使用新参数
 
-## Run
+## 3. 运行方式
 
-1. Configure `application.yml` (or env vars) for DB + LLM:
-   - `OPENAI_API_KEY`
-   - `OPENAI_BASE_URL` (optional)
-   - `OPENAI_MODEL` (optional)
-   - `PG_HOST` (optional, default `localhost`)
-   - `PG_PORT` (optional, default `5432`)
-   - `PG_DATABASE` (optional, default `qforce`)
-   - `PG_USERNAME` (optional, default `postgres`)
-   - `PG_PASSWORD` (optional, default `postgres`)
-2. Start:
+1. 配置数据库与模型参数（`application.yml` 或环境变量）
+2. 启动服务：
    - `mvn spring-boot:run`
-3. Open demo page:
+3. 打开演示页：
    - `http://localhost:8080/demo.html`
 
-> Tables are auto-created at startup from `src/main/resources/schema.sql`.
-> Initial memory snippets are loaded from `src/main/resources/data.sql`.
+> 数据库表会在启动时自动初始化：`schema.sql` / `data.sql`
 
-## Knowledge base tables
+## 4. 主要接口
 
-- `memory_snippet`: long-term memory snippets for retrieval
-- `behavior_event`: raw behavior/event records from requests
-- `prediction_log`: prediction outputs (scores, behaviors, reasoning, evidence)
-- `prediction_event`: many-to-many relation between predictions and source events
+- `POST /api/predict-behavior/simple`  
+  一句话输入事件，返回预测行动（推荐前台使用）
 
-## API
+- `POST /api/predict-behavior/auto`  
+  自然语言叙述 + 可选 profile，自动抽取后预测
 
-`POST /api/predict-behavior`
+- `POST /api/predict-behavior`  
+  传结构化事件直接预测（适合系统对接）
 
-```json
-{
-  "events": [
-    {
-      "type": "工作",
-      "description": "项目deadline提前",
-      "occurredAt": "2026-04-21T08:20:00Z",
-      "intensity": 0.9,
-      "credibility": 0.95,
-      "distance": "direct"
-    },
-    {
-      "type": "社交",
-      "description": "和同事发生冲突",
-      "occurredAt": "2026-04-21T09:00:00Z",
-      "intensity": 0.8,
-      "credibility": 0.9,
-      "distance": "direct"
-    }
-  ],
-  "profile": {
-    "moodSensitivity": 1.2,
-    "focusSensitivity": 1.0,
-    "stressSensitivity": 1.4,
-    "procrastinationBaseline": 0.6,
-    "actionBaseline": 0.5,
-    "helpSeekingBaseline": 0.4
-  },
-  "memoryTopK": 5,
-  "predictionHorizon": "24h"
-}
-```
+- `POST /api/predict-behavior/feedback`  
+  回写真实行动，用于学习调参
 
-`POST /api/predict-behavior/auto` (AI 先解析自然语言事件再预测)
+详细字段、示例与错误码见：`API.md`
 
-```json
-{
-  "narrative": "今天上午老板通知项目提前交付，我和同事还因为方案争执了半小时，下午家人安慰了我。",
-  "profile": {
-    "moodSensitivity": 1.1,
-    "focusSensitivity": 1.0,
-    "stressSensitivity": 1.3,
-    "procrastinationBaseline": 0.5,
-    "actionBaseline": 0.55,
-    "helpSeekingBaseline": 0.45
-  },
-  "memoryTopK": 5,
-  "predictionHorizon": "24h"
-}
-```
+## 5. 知识库表说明
+
+- `memory_snippet`：长期记忆片段（检索输入）
+- `behavior_event`：原始事件记录
+- `prediction_log`：预测结果（含 top behaviors / evidence）
+- `prediction_event`：预测与事件关联
+- `prediction_feedback`：真实行动反馈
+- `adaptive_profile`：可学习画像参数（预测默认读取）
+
+## 6. 反馈学习如何工作
+
+- 先计算真实行动与预测行动的文本相似度，判断是否命中
+- 根据置信度、近期命中率、连续命中/未命中动态计算更新步长
+- 用平滑策略更新画像参数，减少抖动
+- 更新后的 `adaptive_profile` 自动用于后续预测
 
